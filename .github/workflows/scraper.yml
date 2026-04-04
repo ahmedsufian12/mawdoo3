@@ -31,3 +31,10 @@ jobs:
         with:
           name: mawdoo3-data
           path: output.json
+      - name: 💾 Commit results
+        run: |
+          git config --global user.name "bot"
+          git config --global user.email "bot@github.com"
+          git add output.json
+          git commit -m "update data" || echo "no changes"
+          git push
