@@ -1,0 +1,33 @@
+name: Mawdoo3 Scraper
+
+on:
+  workflow_dispatch:   # تشغيل يدوي
+  schedule:
+    - cron: "0 */6 * * *"   # كل 6 ساعات
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 Clone repo
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Install deps
+        run: |
+          pip install -r requirements.txt
+
+      - name: 🚀 Run scraper
+        run: |
+          python scraper.py
+
+      - name: 📤 Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: mawdoo3-data
+          path: output.json
