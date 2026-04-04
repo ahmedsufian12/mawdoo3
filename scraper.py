@@ -1,79 +1,54 @@
 import requests
-from bs4 import BeautifulSoup
 import json
 import time
 
-BASE = "https://mawdoo3.com"
-HEADERS = {"User-Agent": "Mozilla/5.0"}
+API_URL = "https://mawdoo3.com/wp-json/wp/v2/posts"
 
-visited = set()
+HEADERS = {
+    "User-Agent": "Mozilla/5.0"
+}
+
 results = []
 
 
-def get(url):
+def fetch_posts(page=1):
     try:
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        r.raise_for_status()
-        return BeautifulSoup(r.text, "html.parser")
+        res = requests.get(API_URL, params={
+            "per_page": 10,
+            "page": page
+        }, headers=HEADERS, timeout=10)
+
+        if res.status_code != 200:
+            return []
+
+        return res.json()
     except:
-        return None
-
-
-def get_posts(page_url):
-    soup = get(page_url)
-    links = set()
-
-    if not soup:
-        return links
-
-    for a in soup.find_all("a", href=True):
-        href = a["href"]
-
-        if href.startswith("/") and len(href.split("/")) > 2:
-            links.add(BASE + href)
-
-    return links
-
-
-def scrape_post(url):
-    if url in visited:
-        return
-
-    soup = get(url)
-    if not soup:
-        return
-
-    title = soup.find("h1")
-    article = soup.find("article")
-
-    if not title or not article:
-        return
-
-    data = {
-        "url": url,
-        "title": title.get_text(strip=True),
-        "content": article.get_text(strip=True)
-    }
-
-    print("✔", data["title"])
-
-    visited.add(url)
-    results.append(data)
+        return []
 
 
 def run():
-    # جرب قسم واحد لتجنب البلوك
-    category = BASE + "/%D8%AA%D8%B9%D9%84%D9%8A%D9%85"
+    for page in range(1, 6):  # 🔥 عدد الصفحات
+        print(f"Page {page}")
 
-    for page in range(1, 4):
-        page_url = f"{category}/page/{page}"
-        print("Page:", page_url)
+        posts = fetch_posts(page)
 
-        posts = get_posts(page_url)
+        if not posts:
+            break
 
         for p in posts:
-            scrape_post(p)
-            time.sleep(1)
+            data = {
+                "id": p["id"],
+                "title": p["title"]["rendered"],
+                "content": p["content"]["rendered"],
+                "excerpt": p["excerpt"]["rendered"],
+                "link": p["link"]
+            }
+
+            print("✔", data["title"])
+
+            results.append(data)
+
+        time.sleep(1)
 
     with open("output.json", "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=2)
