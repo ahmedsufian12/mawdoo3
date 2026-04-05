@@ -43,14 +43,15 @@ def clean_content(soup):
     for sup in content.find_all('sup', class_='reference'):
         sup.decompose()
 
-    # استخراج الصورة الرئيسية (مرة واحدة فقط)
+    # استخراج الصورة الرئيسية (بناء الوسم باستخدام BeautifulSoup لتجنب مشاكل الـ Strings)
     main_img_html = ""
     img = content.find('img', id='articleimagediv')
     if img:
         src = img.get('src') or img.get('data-src')
         alt = img.get('alt') or img.get('title') or ""
         if src:
-            main_img_html = f'<img src="{src}" alt="{alt}" />'
+            new_img = soup.new_tag('img', src=src, alt=alt)
+            main_img_html = str(new_img)
 
     # تنظيف الروابط
     for a in content.find_all('a'):
@@ -83,14 +84,21 @@ def clean_content(soup):
     html = str(content)
     html = re.sub(r'\s+', ' ', html)
     html = re.sub(r'<\s*br\s*/?>', '', html)
+    
+    # 🌟 التعديل السحري هنا 🌟
+    # تحويل خصائص الـ HTML من صيغة ="القيمة" إلى صيغة ='القيمة' (علامة مفردة بدلاً من مزدوجة)
+    # هذا سيمنع JSON من إضافة الشرطة المائلة (\") تماماً
+    html = re.sub(r'="([^"]*)"', r"='\1'", html)
+    
     html = html.strip()
 
     # إزالة أي div خارجي نهائياً
     if html.startswith('<div>') and html.endswith('</div>'):
         html = html[5:-6].strip()
 
-    # إضافة الصورة في البداية (مرة واحدة)
+    # إضافة الصورة في البداية (وتحويل علاماتها لتكون مفردة أيضاً)
     if main_img_html:
+        main_img_html = main_img_html.replace('"', "'")
         html = main_img_html + " " + html
 
     return html
