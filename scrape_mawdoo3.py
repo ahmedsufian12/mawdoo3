@@ -31,7 +31,6 @@ seen = set()
 MAX_FULL_SCRAPE = 200
 
 def clean_content(soup):
-    """تنظيف نهائي 100% حسب طلبك الأخير"""
     content = soup.find('div', id='mw-content-text')
     if not content:
         return "<p>لم يتم استخراج المحتوى</p>"
@@ -44,44 +43,46 @@ def clean_content(soup):
     for sup in content.find_all('sup', class_='reference'):
         sup.decompose()
 
-    # معالجة الصورة الرئيسية (نجعلها أول عنصر في المحتوى)
-    img_tag = None
-    main_img = content.find('img', id='articleimagediv')
-    if main_img:
-        src = main_img.get('src') or main_img.get('data-src')
-        alt = main_img.get('alt') or main_img.get('title') or ""
+    # استخراج الصورة الرئيسية (لن نضعها داخل content_html مرة أخرى)
+    main_img = None
+    img = content.find('img', id='articleimagediv')
+    if img:
+        src = img.get('src') or img.get('data-src')
+        alt = img.get('alt') or img.get('title') or ""
         if src:
-            img_tag = f'<img src="{src}" alt="{alt}" />'
+            main_img = f'<img src="{src}" alt="{alt}" />'
 
     # تنظيف الروابط
     for a in content.find_all('a'):
-        href = a.get('href', '')
+        href = a.get('href', '').strip()
         
+        if not href or href == '#':
+            a.decompose()
+            continue
+
         # روابط داخلية (mawdoo3.com)
-        if 'mawdoo3.com' in href and not any(ext in href.lower() for ext in ['.jpg','.jpeg','.png','.gif','.webp']):
+        if 'mawdoo3.com' in href and not any(ext in href.lower() for ext in ['.jpg','.jpeg','.png','.gif','.webp','.pdf']):
             slug = href.rstrip('/').split('/')[-1]
             a['href'] = f'/{slug}'
         # روابط خارجية
         else:
-            match = re.search(r'https?://[^"\']+', href)
+            match = re.search(r'https?://[^\s"\']+', href)
             if match:
                 a['href'] = match.group(0)
-        
-        # تنظيف الروابط: فقط href + target + rel
-        a.attrs = {}
-        a['href'] = a.get('href', '#')
-        a['target'] = '_blank'
-        a['rel'] = 'nofollow'
+            else:
+                a['href'] = href
 
-    # حذف كل العناصر غير المرغوبة
+        # تنظيف الرابط: فقط href + target + rel
+        a.attrs = {'href': a['href'], 'target': '_blank', 'rel': 'nofollow'}
+
+    # حذف العناصر غير الضرورية
     for junk in content.select('script, .feedback-feature, .popup-container, .share, #widget, .printfooter, .embedvideo, .related-articles-list1'):
         junk.decompose()
 
-    # حذف كل class و id و itemprop من كل الوسوم
+    # حذف كل class و id و itemprop
     for tag in content.find_all(True):
         tag.attrs = {k: v for k, v in tag.attrs.items() if k not in ['class', 'id', 'itemprop']}
 
-    # تحويل HTML إلى نص نظيف
     html = str(content)
     html = re.sub(r'\s+', ' ', html)
     html = re.sub(r'<\s*br\s*/?>', '', html)
@@ -91,9 +92,9 @@ def clean_content(soup):
     if html.startswith('<div>') and html.endswith('</div>'):
         html = html[5:-6].strip()
 
-    # إضافة الصورة في البداية (إذا وجدت)
-    if img_tag:
-        html = img_tag + html
+    # إضافة الصورة الرئيسية في البداية (مرة واحدة فقط)
+    if main_img:
+        html = main_img + " " + html
 
     return html
 
@@ -115,6 +116,7 @@ def get_article_details(url):
 
         categories = [a.get_text(strip=True) for a in soup.select("a[href^='/تصنيف:']") if a.get_text(strip=True)]
 
+        # الصورة الرئيسية (للحقل المنفصل)
         featured = None
         img = soup.find('img', id='articleimagediv')
         if img:
@@ -142,7 +144,6 @@ def get_article_details(url):
         print(f"   ❌ خطأ في {url}: {e}")
         return None
 
-# باقي الدوال (scrape_links + run) كما هي بدون تغيير
 def scrape_links():
     print("🚀 مرحلة 1: جمع الروابط...")
     for cat in CATEGORIES:
@@ -177,7 +178,7 @@ def scrape_links():
 def run():
     scrape_links()
     
-    print(f"\n🔥 مرحلة 2: استخراج + تنظيف المحتوى لـ {min(MAX_FULL_SCRAPE, len(results))} مقالة...")
+    print(f"\n🔥 مرحلة 2: تنظيف المحتوى لـ {min(MAX_FULL_SCRAPE, len(results))} مقالة...")
     full_articles = []
     for i, item in enumerate(results[:MAX_FULL_SCRAPE]):
         print(f"   [{i+1}/{MAX_FULL_SCRAPE}] {item['link']}")
@@ -196,7 +197,7 @@ def run():
     with open("output.json", "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
     
-    print(f"\n🎉 انتهى بنجاح! الروابط والصور أصبحت بالشكل المطلوب تماماً")
+    print(f"\n🎉 انتهى! تم تصليح الروابط والصورة حسب طلبك")
 
 if __name__ == "__main__":
     run()
