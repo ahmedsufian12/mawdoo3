@@ -28,7 +28,7 @@ CATEGORIES = [
 
 results = []
 seen = set()
-MAX_FULL_SCRAPE = 2000
+MAX_FULL_SCRAPE = 200
 
 def clean_content(soup):
     content = soup.find('div', id='mw-content-text')
