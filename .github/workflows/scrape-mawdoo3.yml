@@ -1,4 +1,4 @@
-name: Scrape Mawdoo3 Full (Links + Full Content)
+name: Scrape Mawdoo3 Full (CSV Version)
 
 on:
   schedule:
@@ -31,10 +31,14 @@ jobs:
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add output.json
+          
+          # 🌟 التعديل هنا: إضافة ملف الـ CSV بدلاً من الـ JSON
+          git add output.csv
+          
+          # التحقق من وجود تغييرات في ملف الـ CSV
           if git diff --cached --quiet; then
-            echo "✅ No changes"
+            echo "✅ No changes to commit"
           else
-            git commit -m "📊 Full scrape mawdoo3.com - $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            git commit -m "📊 Full scrape CSV update - $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
             git push
           fi
