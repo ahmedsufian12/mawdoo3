@@ -27,7 +27,24 @@ CATEGORIES = [
 
 results = []
 seen = set()
-MAX_FULL_SCRAPE = 800   # يمكنك رفعه إلى 1500 أو أكثر (لكن سيطول الوقت)
+MAX_FULL_SCRAPE = 1200   # يمكنك رفعه إلى 2000+ (سيأخذ وقت أطول)
+
+def clean_content(soup):
+    """تنظيف المحتوى من الإعلانات والسكريبتات والعناصر غير المرغوبة"""
+    content_div = soup.find('div', id='mw-content-text')
+    if not content_div:
+        return "<p>لم يتم استخراج المحتوى</p>"
+    
+    # إزالة كل السكريبتات
+    for script in content_div.find_all('script'):
+        script.decompose()
+    
+    # إزالة العناصر غير المرغوبة (إعلانات، popups، related lists داخل المحتوى)
+    for junk in content_div.select('.related-articles-list1, .feedback-feature, .popup-container, #widget, .printfooter, .share, #inno-ads'):
+        junk.decompose()
+    
+    # إرجاع HTML نظيف ومنسق
+    return str(content_div)
 
 def get_article_details(url):
     try:
@@ -38,43 +55,39 @@ def get_article_details(url):
         soup = BeautifulSoup(r.text, "html.parser")
         
         # 1. العنوان
-        h1 = soup.find("h1")
-        title = h1.get_text(strip=True).replace(" - موضوع", "").strip() if h1 else "بدون عنوان"
+        title_tag = soup.find('h1', class_='title') or soup.find('h1')
+        title = title_tag.get_text(strip=True).replace(" - موضوع", "").strip() if title_tag else "بدون عنوان"
         
-        # 2. تاريخ النشر
+        # 2. تاريخ النشر / آخر تحديث
         published_date = None
-        date_p = soup.find("p", string=lambda t: t and "آخر تحديث" in t)
-        if date_p:
-            published_date = date_p.get_text(strip=True)
+        date_span = soup.find('span', attrs={"itemprop": "dateModified"}) or soup.find('span', attrs={"itemprop": "datePublished"})
+        if date_span:
+            published_date = date_span.get_text(strip=True)
+        else:
+            # طريقة بديلة
+            date_p = soup.find(string=lambda t: t and "آخر تحديث" in t)
+            if date_p and date_p.parent:
+                published_date = date_p.parent.get_text(strip=True)
         
-        # 3. التصنيفات (في MediaWiki تكون روابط داخلية)
+        # 3. التصنيفات
         categories = []
         for a in soup.select("a[href^='/تصنيف:'], a[href*='تصنيف']"):
             cat = a.get_text(strip=True)
             if cat and cat not in categories:
                 categories.append(cat)
-        # إذا لم يوجد، نأخذ بعض الروابط المتعلقة داخل المحتوى
-        if not categories:
-            for a in soup.select(".mw-parser-output a"):
-                text = a.get_text(strip=True)
-                if text and len(text) > 3 and text not in categories and "فوائد" in text or "ما هو" in text:
-                    categories.append(text)
         
         # 4. الصورة الرئيسية
         featured = None
-        # طريقة 1: og:image
-        og_img = soup.find("meta", property="og:image")
-        if og_img:
-            featured = og_img.get("content")
-        # طريقة 2: أول صورة كبيرة
+        img = soup.find('img', id='articleimagediv')
+        if img:
+            featured = img.get('src') or img.get('data-src')
         if not featured:
-            img = soup.find("img", src=lambda s: s and ("modo3.com" in s or "mawdoo3.com" in s))
-            if img:
-                featured = img.get("src") or img.get("data-src")
+            og = soup.find('meta', property='og:image')
+            if og:
+                featured = og.get('content')
         
-        # 5. نص المقالة كامل HTML (المحتوى الحقيقي)
-        content_div = soup.find("div", class_="mw-parser-output")
-        content_html = str(content_div) if content_div else "<p>لم يتم استخراج المحتوى</p>"
+        # 5. نص المقالة كامل HTML (منظف)
+        content_html = clean_content(soup)
         
         return {
             "title": title,
@@ -91,7 +104,7 @@ def get_article_details(url):
         return None
 
 def scrape_links():
-    print("🚀 مرحلة 1: جمع كل الروابط...")
+    print("🚀 مرحلة 1: جمع الروابط...")
     for cat in CATEGORIES:
         for page in range(1, 5):
             url = f"{cat}/page/{page}/" if page > 1 else cat
@@ -101,12 +114,11 @@ def scrape_links():
                 if r.status_code != 200:
                     break
                 soup = BeautifulSoup(r.text, "html.parser")
-                links = soup.select("li a, h1 a, h2 a, h3 a")
+                links = soup.select("li a, h1 a, h2 a, h3 a, .title a")
                 found = 0
                 for a in links:
                     href = a.get("href")
-                    title_text = a.get_text(strip=True)
-                    if not href or len(title_text) < 8:
+                    if not href or len(a.get_text(strip=True)) < 8:
                         continue
                     if not href.startswith("http"):
                         href = "https://mawdoo3.com" + href if href.startswith("/") else href
@@ -132,7 +144,7 @@ def run():
         details = get_article_details(item["link"])
         if details:
             full_articles.append(details)
-        time.sleep(1.7)   # delay مهذب (يقلل الحظر)
+        time.sleep(1.6)   # delay مهذب
     
     output = {
         "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -146,7 +158,7 @@ def run():
     
     print(f"\n🎉 انتهى بنجاح!")
     print(f"   • تم جمع {len(results)} رابط")
-    print(f"   • تم استخراج التفاصيل الكاملة (HTML + صور + تاريخ + تصنيفات) لـ {len(full_articles)} مقالة")
+    print(f"   • تم استخراج محتوى HTML نظيف لـ {len(full_articles)} مقالة")
 
 if __name__ == "__main__":
     run()
