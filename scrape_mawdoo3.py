@@ -28,7 +28,7 @@ CATEGORIES = [
 
 results = []
 seen = set()
-MAX_FULL_SCRAPE = 200
+MAX_FULL_SCRAPE = 2000
 
 def clean_content(soup):
     content = soup.find('div', id='mw-content-text')
@@ -48,7 +48,7 @@ def clean_content(soup):
     img = content.find('img', id='articleimagediv')
     if img:
         src = img.get('src') or img.get('data-src')
-        alt = img.get('alt') or img.get('title') or "صورة مقال"
+        alt = img.get('alt') or img.get('title') or ""
         if src:
             main_img_html = f'<img src="{src}" alt="{alt}" />'
 
@@ -59,8 +59,8 @@ def clean_content(soup):
             a.decompose()
             continue
 
-        # روابط داخلية → relative
-        if 'mawdoo3.com' in href and not any(ext in href.lower() for ext in ['.jpg','.jpeg','.png','.gif','.webp']):
+        # روابط داخلية
+        if 'mawdoo3.com' in href and not any(ext in href.lower() for ext in ['.jpg','.jpeg','.png','.gif','.webp','.pdf']):
             slug = href.rstrip('/').split('/')[-1]
             a['href'] = f'/{slug}'
         # روابط خارجية
@@ -69,14 +69,14 @@ def clean_content(soup):
             if match:
                 a['href'] = match.group(0)
 
-        # تنظيف الرابط النهائي
+        # تنظيف نهائي
         a.attrs = {'href': a['href'], 'target': '_blank', 'rel': 'nofollow'}
 
-    # حذف العناصر غير المرغوبة
+    # حذف كل العناصر غير المرغوبة
     for junk in content.select('script, .feedback-feature, .popup-container, .share, #widget, .printfooter, .embedvideo, .related-articles-list1, picture, source'):
         junk.decompose()
 
-    # حذف كل class و id و itemprop
+    # حذف class و id و itemprop من كل الوسوم
     for tag in content.find_all(True):
         tag.attrs = {k: v for k, v in tag.attrs.items() if k not in ['class', 'id', 'itemprop']}
 
@@ -89,7 +89,7 @@ def clean_content(soup):
     if html.startswith('<div>') and html.endswith('</div>'):
         html = html[5:-6].strip()
 
-    # إضافة الصورة مرة واحدة فقط في البداية
+    # إضافة الصورة في البداية (مرة واحدة)
     if main_img_html:
         html = main_img_html + " " + html
 
@@ -103,16 +103,22 @@ def get_article_details(url):
 
         soup = BeautifulSoup(r.text, "html.parser")
 
+        # العنوان
         title_tag = soup.find('h1', class_='title') or soup.find('h1')
         title = title_tag.get_text(strip=True).replace(" - موضوع", "").strip() if title_tag else "بدون عنوان"
 
+        # التاريخ الحقيقي (من content attribute)
         published_date = None
         date_span = soup.find('span', attrs={"itemprop": ["dateModified", "datePublished"]})
-        if date_span:
+        if date_span and date_span.get('content'):
+            published_date = date_span.get('content')
+        elif date_span:
             published_date = date_span.get_text(strip=True)
 
+        # التصنيفات
         categories = [a.get_text(strip=True) for a in soup.select("a[href^='/تصنيف:']") if a.get_text(strip=True)]
 
+        # الصورة الرئيسية (للحقل المنفصل)
         featured = None
         img = soup.find('img', id='articleimagediv')
         if img:
@@ -193,7 +199,7 @@ def run():
     with open("output.json", "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
     
-    print(f"\n🎉 انتهى بنجاح! الصورة والروابط أصبحت بالشكل المطلوب")
+    print(f"\n🎉 انتهى بنجاح! تم تصليح الصورة والروابط والتاريخ")
 
 if __name__ == "__main__":
     run()
