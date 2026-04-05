@@ -69,14 +69,14 @@ def clean_content(soup):
             if match:
                 a['href'] = match.group(0)
 
-        # تنظيف نهائي
+        # تنظيف الرابط
         a.attrs = {'href': a['href'], 'target': '_blank', 'rel': 'nofollow'}
 
-    # حذف كل العناصر غير المرغوبة
+    # حذف كل العناصر غير الضرورية + picture + source
     for junk in content.select('script, .feedback-feature, .popup-container, .share, #widget, .printfooter, .embedvideo, .related-articles-list1, picture, source'):
         junk.decompose()
 
-    # حذف class و id و itemprop من كل الوسوم
+    # حذف كل class و id و itemprop
     for tag in content.find_all(True):
         tag.attrs = {k: v for k, v in tag.attrs.items() if k not in ['class', 'id', 'itemprop']}
 
@@ -85,7 +85,7 @@ def clean_content(soup):
     html = re.sub(r'<\s*br\s*/?>', '', html)
     html = html.strip()
 
-    # إزالة أي div خارجي
+    # إزالة أي div خارجي نهائياً
     if html.startswith('<div>') and html.endswith('</div>'):
         html = html[5:-6].strip()
 
@@ -103,11 +103,10 @@ def get_article_details(url):
 
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # العنوان
         title_tag = soup.find('h1', class_='title') or soup.find('h1')
         title = title_tag.get_text(strip=True).replace(" - موضوع", "").strip() if title_tag else "بدون عنوان"
 
-        # التاريخ الحقيقي (من content attribute)
+        # التاريخ الحقيقي
         published_date = None
         date_span = soup.find('span', attrs={"itemprop": ["dateModified", "datePublished"]})
         if date_span and date_span.get('content'):
@@ -115,10 +114,8 @@ def get_article_details(url):
         elif date_span:
             published_date = date_span.get_text(strip=True)
 
-        # التصنيفات
         categories = [a.get_text(strip=True) for a in soup.select("a[href^='/تصنيف:']") if a.get_text(strip=True)]
 
-        # الصورة الرئيسية (للحقل المنفصل)
         featured = None
         img = soup.find('img', id='articleimagediv')
         if img:
@@ -199,7 +196,7 @@ def run():
     with open("output.json", "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
     
-    print(f"\n🎉 انتهى بنجاح! تم تصليح الصورة والروابط والتاريخ")
+    print(f"\n🎉 انتهى بنجاح! content_html أصبح نظيف جداً بدون div خارجي وروابط وصور صحيحة")
 
 if __name__ == "__main__":
     run()
