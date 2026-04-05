@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 import json
 import time
+import re
 from datetime import datetime, timezone
 
 HEADERS = {
@@ -27,56 +28,71 @@ CATEGORIES = [
 
 results = []
 seen = set()
-MAX_FULL_SCRAPE = 1200   # يمكنك رفعه إلى 2000+ (سيأخذ وقت أطول)
+MAX_FULL_SCRAPE = 200   # يمكنك رفعه أكثر
 
 def clean_content(soup):
-    """تنظيف المحتوى من الإعلانات والسكريبتات والعناصر غير المرغوبة"""
-    content_div = soup.find('div', id='mw-content-text')
-    if not content_div:
+    """تنظيف المحتوى حسب طلبك بالضبط"""
+    content = soup.find('div', id='mw-content-text')
+    if not content:
         return "<p>لم يتم استخراج المحتوى</p>"
-    
-    # إزالة كل السكريبتات
-    for script in content_div.find_all('script'):
-        script.decompose()
-    
-    # إزالة العناصر غير المرغوبة (إعلانات، popups، related lists داخل المحتوى)
-    for junk in content_div.select('.related-articles-list1, .feedback-feature, .popup-container, #widget, .printfooter, .share, #inno-ads'):
+
+    # 1. حذف جدول المحتويات (TOC)
+    toc = content.find('div', id='toc')
+    if toc:
+        toc.decompose()
+
+    # 2. حذف أرقام المراجع (الـ sup)
+    for sup in content.find_all('sup', class_='reference'):
+        sup.decompose()
+
+    # 3. تصليح روابط المراجع + إضافة nofollow + target="_blank"
+    for a in content.find_all('a', class_='external'):
+        href = a.get('href', '')
+        # إصلاح الروابط المعطوبة (localhost)
+        match = re.search(r'https?://[^"\']+', href)
+        if match:
+            href = match.group(0)
+        a['href'] = href
+        a['rel'] = 'nofollow'
+        a['target'] = '_blank'
+
+    # 4. حذف كل العناصر غير المرغوبة
+    for junk in content.select('script, .feedback-feature, .popup-container, .share, #widget, .printfooter, .embedvideo, .related-articles-list1'):
         junk.decompose()
-    
-    # إرجاع HTML نظيف ومنسق
-    return str(content_div)
+
+    # 5. تنظيف نهائي: إزالة المسافات الزائدة والـ \n
+    for tag in content.find_all(['p', 'div', 'br']):
+        if not tag.get_text(strip=True):
+            tag.decompose()
+
+    # تحويل إلى نص HTML نظيف جداً
+    html = str(content)
+    html = re.sub(r'\s+', ' ', html)          # إزالة كل المسافات الزائدة
+    html = re.sub(r'<\s*br\s*/?>', '', html)  # حذف <br> الزائدة
+    return html.strip()
 
 def get_article_details(url):
     try:
         r = requests.get(url, headers=HEADERS, timeout=25)
         if r.status_code != 200:
             return None
-        
+
         soup = BeautifulSoup(r.text, "html.parser")
-        
-        # 1. العنوان
+
+        # العنوان
         title_tag = soup.find('h1', class_='title') or soup.find('h1')
         title = title_tag.get_text(strip=True).replace(" - موضوع", "").strip() if title_tag else "بدون عنوان"
-        
-        # 2. تاريخ النشر / آخر تحديث
+
+        # التاريخ
         published_date = None
-        date_span = soup.find('span', attrs={"itemprop": "dateModified"}) or soup.find('span', attrs={"itemprop": "datePublished"})
+        date_span = soup.find('span', attrs={"itemprop": ["dateModified", "datePublished"]})
         if date_span:
             published_date = date_span.get_text(strip=True)
-        else:
-            # طريقة بديلة
-            date_p = soup.find(string=lambda t: t and "آخر تحديث" in t)
-            if date_p and date_p.parent:
-                published_date = date_p.parent.get_text(strip=True)
-        
-        # 3. التصنيفات
-        categories = []
-        for a in soup.select("a[href^='/تصنيف:'], a[href*='تصنيف']"):
-            cat = a.get_text(strip=True)
-            if cat and cat not in categories:
-                categories.append(cat)
-        
-        # 4. الصورة الرئيسية
+
+        # التصنيفات
+        categories = [a.get_text(strip=True) for a in soup.select("a[href^='/تصنيف:']") if a.get_text(strip=True)]
+
+        # الصورة الرئيسية
         featured = None
         img = soup.find('img', id='articleimagediv')
         if img:
@@ -85,10 +101,10 @@ def get_article_details(url):
             og = soup.find('meta', property='og:image')
             if og:
                 featured = og.get('content')
-        
-        # 5. نص المقالة كامل HTML (منظف)
+
+        # المحتوى المنظف حسب طلبك
         content_html = clean_content(soup)
-        
+
         return {
             "title": title,
             "link": url,
@@ -98,11 +114,12 @@ def get_article_details(url):
             "content_html": content_html,
             "scraped_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         }
-        
+
     except Exception as e:
         print(f"   ❌ خطأ في {url}: {e}")
         return None
 
+# باقي الكود (جمع الروابط) كما هو بدون تغيير
 def scrape_links():
     print("🚀 مرحلة 1: جمع الروابط...")
     for cat in CATEGORIES:
@@ -137,14 +154,14 @@ def scrape_links():
 def run():
     scrape_links()
     
-    print(f"\n🔥 مرحلة 2: استخراج التفاصيل الكاملة لـ {min(MAX_FULL_SCRAPE, len(results))} مقالة...")
+    print(f"\n🔥 مرحلة 2: استخراج + تنظيف المحتوى لـ {min(MAX_FULL_SCRAPE, len(results))} مقالة...")
     full_articles = []
     for i, item in enumerate(results[:MAX_FULL_SCRAPE]):
         print(f"   [{i+1}/{MAX_FULL_SCRAPE}] {item['link']}")
         details = get_article_details(item["link"])
         if details:
             full_articles.append(details)
-        time.sleep(1.6)   # delay مهذب
+        time.sleep(1.6)
     
     output = {
         "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -156,9 +173,7 @@ def run():
     with open("output.json", "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
     
-    print(f"\n🎉 انتهى بنجاح!")
-    print(f"   • تم جمع {len(results)} رابط")
-    print(f"   • تم استخراج محتوى HTML نظيف لـ {len(full_articles)} مقالة")
+    print(f"\n🎉 انتهى بنجاح! تم تنظيف كل المقالات حسب طلبك")
 
 if __name__ == "__main__":
     run()
