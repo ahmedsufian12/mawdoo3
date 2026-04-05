@@ -1,8 +1,8 @@
-name: Scrape Mawdoo3 (Playwright)
+name: Scrape Mawdoo3 (Playwright Fixed)
 
 on:
   schedule:
-    - cron: '0 4 * * *'     # كل يوم الساعة 4 صباحاً UTC
+    - cron: '0 5 * * *'      # كل يوم 5 صباحاً UTC
   workflow_dispatch:
 
 permissions:
@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Playwright and dependencies
+      - name: Install Playwright
         run: |
           pip install playwright
           playwright install chromium --with-deps
@@ -29,7 +29,7 @@ jobs:
       - name: Run Scraper
         run: python scrape_mawdoo3.py
 
-      - name: Commit & Push if changes
+      - name: Commit & Push
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
@@ -37,6 +37,6 @@ jobs:
           if git diff --cached --quiet; then
             echo "✅ No new articles"
           else
-            git commit -m "📊 Update mawdoo3 scraped data - $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            git commit -m "📊 Update mawdoo3 data - $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
             git push
           fi
