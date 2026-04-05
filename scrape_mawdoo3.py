@@ -28,7 +28,7 @@ CATEGORIES = [
 
 results = []
 seen = set()
-MAX_FULL_SCRAPE = 200
+MAX_FULL_SCRAPE = 2000
 
 def clean_content(soup):
     content = soup.find('div', id='mw-content-text')
@@ -43,25 +43,24 @@ def clean_content(soup):
     for sup in content.find_all('sup', class_='reference'):
         sup.decompose()
 
-    # استخراج الصورة الرئيسية (لن نضعها داخل content_html مرة أخرى)
-    main_img = None
+    # استخراج الصورة الرئيسية (مرة واحدة فقط)
+    main_img_html = ""
     img = content.find('img', id='articleimagediv')
     if img:
         src = img.get('src') or img.get('data-src')
-        alt = img.get('alt') or img.get('title') or ""
+        alt = img.get('alt') or img.get('title') or "صورة مقال"
         if src:
-            main_img = f'<img src="{src}" alt="{alt}" />'
+            main_img_html = f'<img src="{src}" alt="{alt}" />'
 
     # تنظيف الروابط
     for a in content.find_all('a'):
         href = a.get('href', '').strip()
-        
-        if not href or href == '#':
+        if not href or href.startswith('#'):
             a.decompose()
             continue
 
-        # روابط داخلية (mawdoo3.com)
-        if 'mawdoo3.com' in href and not any(ext in href.lower() for ext in ['.jpg','.jpeg','.png','.gif','.webp','.pdf']):
+        # روابط داخلية → relative
+        if 'mawdoo3.com' in href and not any(ext in href.lower() for ext in ['.jpg','.jpeg','.png','.gif','.webp']):
             slug = href.rstrip('/').split('/')[-1]
             a['href'] = f'/{slug}'
         # روابط خارجية
@@ -69,14 +68,12 @@ def clean_content(soup):
             match = re.search(r'https?://[^\s"\']+', href)
             if match:
                 a['href'] = match.group(0)
-            else:
-                a['href'] = href
 
-        # تنظيف الرابط: فقط href + target + rel
+        # تنظيف الرابط النهائي
         a.attrs = {'href': a['href'], 'target': '_blank', 'rel': 'nofollow'}
 
-    # حذف العناصر غير الضرورية
-    for junk in content.select('script, .feedback-feature, .popup-container, .share, #widget, .printfooter, .embedvideo, .related-articles-list1'):
+    # حذف العناصر غير المرغوبة
+    for junk in content.select('script, .feedback-feature, .popup-container, .share, #widget, .printfooter, .embedvideo, .related-articles-list1, picture, source'):
         junk.decompose()
 
     # حذف كل class و id و itemprop
@@ -92,9 +89,9 @@ def clean_content(soup):
     if html.startswith('<div>') and html.endswith('</div>'):
         html = html[5:-6].strip()
 
-    # إضافة الصورة الرئيسية في البداية (مرة واحدة فقط)
-    if main_img:
-        html = main_img + " " + html
+    # إضافة الصورة مرة واحدة فقط في البداية
+    if main_img_html:
+        html = main_img_html + " " + html
 
     return html
 
@@ -116,7 +113,6 @@ def get_article_details(url):
 
         categories = [a.get_text(strip=True) for a in soup.select("a[href^='/تصنيف:']") if a.get_text(strip=True)]
 
-        # الصورة الرئيسية (للحقل المنفصل)
         featured = None
         img = soup.find('img', id='articleimagediv')
         if img:
@@ -197,7 +193,7 @@ def run():
     with open("output.json", "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
     
-    print(f"\n🎉 انتهى! تم تصليح الروابط والصورة حسب طلبك")
+    print(f"\n🎉 انتهى بنجاح! الصورة والروابط أصبحت بالشكل المطلوب")
 
 if __name__ == "__main__":
     run()
