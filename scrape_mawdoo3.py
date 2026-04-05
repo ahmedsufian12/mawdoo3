@@ -28,10 +28,10 @@ CATEGORIES = [
 
 results = []
 seen = set()
-MAX_FULL_SCRAPE = 200   # يمكنك رفعه أكثر
+MAX_FULL_SCRAPE = 200
 
 def clean_content(soup):
-    """تنظيف نهائي جداً حسب طلبك"""
+    """تنظيف نهائي 100% حسب طلبك الأخير"""
     content = soup.find('div', id='mw-content-text')
     if not content:
         return "<p>لم يتم استخراج المحتوى</p>"
@@ -44,45 +44,56 @@ def clean_content(soup):
     for sup in content.find_all('sup', class_='reference'):
         sup.decompose()
 
+    # معالجة الصورة الرئيسية (نجعلها أول عنصر في المحتوى)
+    img_tag = None
+    main_img = content.find('img', id='articleimagediv')
+    if main_img:
+        src = main_img.get('src') or main_img.get('data-src')
+        alt = main_img.get('alt') or main_img.get('title') or ""
+        if src:
+            img_tag = f'<img src="{src}" alt="{alt}" />'
+
     # تنظيف الروابط
     for a in content.find_all('a'):
         href = a.get('href', '')
         
-        # إصلاح روابط المراجع الخارجية
-        if 'http' in href and 'mawdoo3.com' not in href:
+        # روابط داخلية (mawdoo3.com)
+        if 'mawdoo3.com' in href and not any(ext in href.lower() for ext in ['.jpg','.jpeg','.png','.gif','.webp']):
+            slug = href.rstrip('/').split('/')[-1]
+            a['href'] = f'/{slug}'
+        # روابط خارجية
+        else:
             match = re.search(r'https?://[^"\']+', href)
             if match:
-                href = match.group(0)
-            a['href'] = href
-            a['rel'] = 'nofollow'
-            a['target'] = '_blank'
+                a['href'] = match.group(0)
         
-        # تحويل الروابط الداخلية إلى relative (بدون full URL)
-        elif 'mawdoo3.com' in href and not any(ext in href.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf']):
-            # إبقاء فقط الجزء بعد آخر سلاش
-            slug_part = href.split('/')[-1]
-            a['href'] = f'/{slug_part}'
-        
-        # إزالة كل الكلاسات والـ id من الرابط
-        a.attrs = {k: v for k, v in a.attrs.items() if k not in ['class', 'id']}
+        # تنظيف الروابط: فقط href + target + rel
+        a.attrs = {}
+        a['href'] = a.get('href', '#')
+        a['target'] = '_blank'
+        a['rel'] = 'nofollow'
 
-    # حذف كل العناصر غير الضرورية
-    for junk in content.select('script, .feedback-feature, .popup-container, .share, #widget, .printfooter, .embedvideo, .related-articles-list1, .quill-better-table-wrapper'):
+    # حذف كل العناصر غير المرغوبة
+    for junk in content.select('script, .feedback-feature, .popup-container, .share, #widget, .printfooter, .embedvideo, .related-articles-list1'):
         junk.decompose()
 
-    # إزالة كل class و id من كل الوسوم
+    # حذف كل class و id و itemprop من كل الوسوم
     for tag in content.find_all(True):
-        tag.attrs = {k: v for k, v in tag.attrs.items() if k not in ['class', 'id']}
+        tag.attrs = {k: v for k, v in tag.attrs.items() if k not in ['class', 'id', 'itemprop']}
 
-    # تنظيف نهائي للمسافات والـ \n
+    # تحويل HTML إلى نص نظيف
     html = str(content)
-    html = re.sub(r'\s+', ' ', html)           # إزالة كل المسافات الزائدة
-    html = re.sub(r'<\s*br\s*/?>', '', html)   # حذف <br> الزائدة
+    html = re.sub(r'\s+', ' ', html)
+    html = re.sub(r'<\s*br\s*/?>', '', html)
     html = html.strip()
 
-    # إزالة الـ div الخارجي نهائياً → نبدأ مباشرة بالمحتوى
+    # إزالة أي div خارجي
     if html.startswith('<div>') and html.endswith('</div>'):
         html = html[5:-6].strip()
+
+    # إضافة الصورة في البداية (إذا وجدت)
+    if img_tag:
+        html = img_tag + html
 
     return html
 
@@ -94,20 +105,16 @@ def get_article_details(url):
 
         soup = BeautifulSoup(r.text, "html.parser")
 
-        # العنوان
         title_tag = soup.find('h1', class_='title') or soup.find('h1')
         title = title_tag.get_text(strip=True).replace(" - موضوع", "").strip() if title_tag else "بدون عنوان"
 
-        # التاريخ
         published_date = None
         date_span = soup.find('span', attrs={"itemprop": ["dateModified", "datePublished"]})
         if date_span:
             published_date = date_span.get_text(strip=True)
 
-        # التصنيفات
         categories = [a.get_text(strip=True) for a in soup.select("a[href^='/تصنيف:']") if a.get_text(strip=True)]
 
-        # الصورة الرئيسية
         featured = None
         img = soup.find('img', id='articleimagediv')
         if img:
@@ -117,15 +124,13 @@ def get_article_details(url):
             if og:
                 featured = og.get('content')
 
-        # استخراج slug من الرابط (بديل عن link)
         slug = url.rstrip('/').split('/')[-1]
 
-        # المحتوى المنظف
         content_html = clean_content(soup)
 
         return {
             "title": title,
-            "slug": slug,                    # بديل عن link
+            "slug": slug,
             "published_date": published_date,
             "categories": categories,
             "featured_image": featured,
@@ -137,6 +142,7 @@ def get_article_details(url):
         print(f"   ❌ خطأ في {url}: {e}")
         return None
 
+# باقي الدوال (scrape_links + run) كما هي بدون تغيير
 def scrape_links():
     print("🚀 مرحلة 1: جمع الروابط...")
     for cat in CATEGORIES:
@@ -190,7 +196,7 @@ def run():
     with open("output.json", "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
     
-    print(f"\n🎉 انتهى بنجاح! تم تنظيف كل المقالات بالشكل المطلوب (بدون كلاسات، بدون div خارجي، slug + روابط نظيفة)")
+    print(f"\n🎉 انتهى بنجاح! الروابط والصور أصبحت بالشكل المطلوب تماماً")
 
 if __name__ == "__main__":
     run()
