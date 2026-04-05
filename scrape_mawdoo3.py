@@ -1,9 +1,9 @@
 import requests
 from bs4 import BeautifulSoup
-import json
+import csv
 import time
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
@@ -39,11 +39,13 @@ def clean_content(soup):
     if toc := content.find('div', id='toc'):
         toc.decompose()
 
-    # حذف أرقام المراجع
+    # 🌟 تعديل المراجع: تحويلها إلى نص عادي [1] بدلاً من حذفها
     for sup in content.find_all('sup', class_='reference'):
-        sup.decompose()
+        ref_text = sup.get_text(strip=True).replace('[', '').replace(']', '')
+        # استبدال الوسم بالكامل بنص منسق
+        sup.replace_with(f" [{ref_text}] ")
 
-    # استخراج الصورة الرئيسية (بناء الوسم باستخدام BeautifulSoup لتجنب مشاكل الـ Strings)
+    # استخراج الصورة الرئيسية
     main_img_html = ""
     img = content.find('img', id='articleimagediv')
     if img:
@@ -60,20 +62,17 @@ def clean_content(soup):
             a.decompose()
             continue
 
-        # روابط داخلية
         if 'mawdoo3.com' in href and not any(ext in href.lower() for ext in ['.jpg','.jpeg','.png','.gif','.webp','.pdf']):
             slug = href.rstrip('/').split('/')[-1]
             a['href'] = f'/{slug}'
-        # روابط خارجية
         else:
             match = re.search(r'https?://[^\s"\']+', href)
             if match:
                 a['href'] = match.group(0)
 
-        # تنظيف الرابط
         a.attrs = {'href': a['href'], 'target': '_blank', 'rel': 'nofollow'}
 
-    # حذف كل العناصر غير الضرورية + picture + source
+    # حذف العناصر غير الضرورية
     for junk in content.select('script, .feedback-feature, .popup-container, .share, #widget, .printfooter, .embedvideo, .related-articles-list1, picture, source'):
         junk.decompose()
 
@@ -85,18 +84,13 @@ def clean_content(soup):
     html = re.sub(r'\s+', ' ', html)
     html = re.sub(r'<\s*br\s*/?>', '', html)
     
-    # 🌟 التعديل السحري هنا 🌟
-    # تحويل خصائص الـ HTML من صيغة ="القيمة" إلى صيغة ='القيمة' (علامة مفردة بدلاً من مزدوجة)
-    # هذا سيمنع JSON من إضافة الشرطة المائلة (\") تماماً
+    # تحويل لعلامات تنصيص مفردة لمنع مشاكل الـ CSV و JSON
     html = re.sub(r'="([^"]*)"', r"='\1'", html)
-    
     html = html.strip()
 
-    # إزالة أي div خارجي نهائياً
     if html.startswith('<div>') and html.endswith('</div>'):
         html = html[5:-6].strip()
 
-    # إضافة الصورة في البداية (وتحويل علاماتها لتكون مفردة أيضاً)
     if main_img_html:
         main_img_html = main_img_html.replace('"', "'")
         html = main_img_html + " " + html
@@ -114,37 +108,36 @@ def get_article_details(url):
         title_tag = soup.find('h1', class_='title') or soup.find('h1')
         title = title_tag.get_text(strip=True).replace(" - موضوع", "").strip() if title_tag else "بدون عنوان"
 
-        # التاريخ الحقيقي
-        published_date = None
-        date_span = soup.find('span', attrs={"itemprop": ["dateModified", "datePublished"]})
-        if date_span and date_span.get('content'):
-            published_date = date_span.get('content')
-        elif date_span:
-            published_date = date_span.get_text(strip=True)
+        # 🌟 استخراج تاريخ النشر الفعلي بدقة
+        published_date = "غير محدد"
+        # نبحث أولاً عن span الذي يحتوي على خاصية datePublished
+        date_tag = soup.find('span', attrs={"itemprop": "datePublished"})
+        if date_tag and date_tag.get('content'):
+            published_date = date_tag.get('content').strip()
+        # إذا لم نجد الـ content، نأخذ النص الموجود داخل الوسم
+        elif date_tag:
+            published_date = date_tag.get_text(strip=True)
 
-        categories = [a.get_text(strip=True) for a in soup.select("a[href^='/تصنيف:']") if a.get_text(strip=True)]
+        # التصنيفات
+        categories_list = [a.get_text(strip=True) for a in soup.select("a[href^='/تصنيف:']") if a.get_text(strip=True)]
+        # 🌟 تحويل القائمة إلى نص مفصول بفاصلة للـ CSV
+        categories_str = ", ".join(categories_list)
 
         featured = None
         img = soup.find('img', id='articleimagediv')
         if img:
             featured = img.get('src') or img.get('data-src')
-        if not featured:
-            og = soup.find('meta', property='og:image')
-            if og:
-                featured = og.get('content')
-
+        
         slug = url.rstrip('/').split('/')[-1]
-
         content_html = clean_content(soup)
 
         return {
             "title": title,
             "slug": slug,
             "published_date": published_date,
-            "categories": categories,
+            "categories": categories_str,
             "featured_image": featured,
-            "content_html": content_html,
-            "scraped_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+            "content_html": content_html
         }
 
     except Exception as e:
@@ -154,57 +147,49 @@ def get_article_details(url):
 def scrape_links():
     print("🚀 مرحلة 1: جمع الروابط...")
     for cat in CATEGORIES:
-        for page in range(1, 5):
+        for page in range(1, 3): # قللت الصفحات للتجربة السريعة
             url = f"{cat}/page/{page}/" if page > 1 else cat
-            print(f"   📄 {url}")
             try:
                 r = requests.get(url, headers=HEADERS, timeout=20)
-                if r.status_code != 200:
-                    break
+                if r.status_code != 200: break
                 soup = BeautifulSoup(r.text, "html.parser")
                 links = soup.select("li a, h1 a, h2 a, h3 a, .title a")
                 found = 0
                 for a in links:
                     href = a.get("href")
-                    if not href or len(a.get_text(strip=True)) < 8:
-                        continue
+                    if not href or len(a.get_text(strip=True)) < 8: continue
                     if not href.startswith("http"):
                         href = "https://mawdoo3.com" + href if href.startswith("/") else href
-                    if href in seen or any(x in href for x in ["/تصنيف:", "/tag/", "/page/"]):
-                        continue
+                    if href in seen or any(x in href for x in ["/تصنيف:", "/tag/", "/page/"]): continue
                     seen.add(href)
                     results.append({"link": href})
                     found += 1
-                print(f"      ✅ {found} رابط جديد (إجمالي: {len(results)})")
-                if found == 0:
-                    break
-                time.sleep(1.2)
-            except:
-                break
+                if found == 0: break
+                time.sleep(1)
+            except: break
 
 def run():
     scrape_links()
     
-    print(f"\n🔥 مرحلة 2: تنظيف المحتوى لـ {min(MAX_FULL_SCRAPE, len(results))} مقالة...")
+    print(f"\n🔥 مرحلة 2: معالجة {min(MAX_FULL_SCRAPE, len(results))} مقالة...")
     full_articles = []
+    
     for i, item in enumerate(results[:MAX_FULL_SCRAPE]):
-        print(f"   [{i+1}/{MAX_FULL_SCRAPE}] {item['link']}")
+        print(f"   [{i+1}/{MAX_FULL_SCRAPE}] جاري معالجة: {item['link']}")
         details = get_article_details(item["link"])
         if details:
             full_articles.append(details)
-        time.sleep(1.5)
+        time.sleep(1)
     
-    output = {
-        "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "total_links_found": len(results),
-        "total_full_articles": len(full_articles),
-        "posts": full_articles
-    }
+    # 🌟 حفظ النتائج بصيغة CSV
+    keys = ["title", "slug", "published_date", "categories", "featured_image", "content_html"]
     
-    with open("output.json", "w", encoding="utf-8") as f:
-        json.dump(output, f, ensure_ascii=False, indent=2)
+    with open("output.csv", "w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=keys)
+        writer.writeheader()
+        writer.writerows(full_articles)
     
-    print(f"\n🎉 انتهى بنجاح! content_html أصبح نظيف جداً بدون div خارجي وروابط وصور صحيحة")
+    print(f"\n🎉 انتهى بنجاح! تم حفظ {len(full_articles)} مقالة في الملف output.csv")
 
 if __name__ == "__main__":
     run()
