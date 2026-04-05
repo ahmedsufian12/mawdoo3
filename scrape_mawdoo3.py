@@ -31,45 +31,60 @@ seen = set()
 MAX_FULL_SCRAPE = 200   # يمكنك رفعه أكثر
 
 def clean_content(soup):
-    """تنظيف المحتوى حسب طلبك بالضبط"""
+    """تنظيف نهائي جداً حسب طلبك"""
     content = soup.find('div', id='mw-content-text')
     if not content:
         return "<p>لم يتم استخراج المحتوى</p>"
 
-    # 1. حذف جدول المحتويات (TOC)
-    toc = content.find('div', id='toc')
-    if toc:
+    # حذف جدول المحتويات
+    if toc := content.find('div', id='toc'):
         toc.decompose()
 
-    # 2. حذف أرقام المراجع (الـ sup)
+    # حذف أرقام المراجع
     for sup in content.find_all('sup', class_='reference'):
         sup.decompose()
 
-    # 3. تصليح روابط المراجع + إضافة nofollow + target="_blank"
-    for a in content.find_all('a', class_='external'):
+    # تنظيف الروابط
+    for a in content.find_all('a'):
         href = a.get('href', '')
-        # إصلاح الروابط المعطوبة (localhost)
-        match = re.search(r'https?://[^"\']+', href)
-        if match:
-            href = match.group(0)
-        a['href'] = href
-        a['rel'] = 'nofollow'
-        a['target'] = '_blank'
+        
+        # إصلاح روابط المراجع الخارجية
+        if 'http' in href and 'mawdoo3.com' not in href:
+            match = re.search(r'https?://[^"\']+', href)
+            if match:
+                href = match.group(0)
+            a['href'] = href
+            a['rel'] = 'nofollow'
+            a['target'] = '_blank'
+        
+        # تحويل الروابط الداخلية إلى relative (بدون full URL)
+        elif 'mawdoo3.com' in href and not any(ext in href.lower() for ext in ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.pdf']):
+            # إبقاء فقط الجزء بعد آخر سلاش
+            slug_part = href.split('/')[-1]
+            a['href'] = f'/{slug_part}'
+        
+        # إزالة كل الكلاسات والـ id من الرابط
+        a.attrs = {k: v for k, v in a.attrs.items() if k not in ['class', 'id']}
 
-    # 4. حذف كل العناصر غير المرغوبة
-    for junk in content.select('script, .feedback-feature, .popup-container, .share, #widget, .printfooter, .embedvideo, .related-articles-list1'):
+    # حذف كل العناصر غير الضرورية
+    for junk in content.select('script, .feedback-feature, .popup-container, .share, #widget, .printfooter, .embedvideo, .related-articles-list1, .quill-better-table-wrapper'):
         junk.decompose()
 
-    # 5. تنظيف نهائي: إزالة المسافات الزائدة والـ \n
-    for tag in content.find_all(['p', 'div', 'br']):
-        if not tag.get_text(strip=True):
-            tag.decompose()
+    # إزالة كل class و id من كل الوسوم
+    for tag in content.find_all(True):
+        tag.attrs = {k: v for k, v in tag.attrs.items() if k not in ['class', 'id']}
 
-    # تحويل إلى نص HTML نظيف جداً
+    # تنظيف نهائي للمسافات والـ \n
     html = str(content)
-    html = re.sub(r'\s+', ' ', html)          # إزالة كل المسافات الزائدة
-    html = re.sub(r'<\s*br\s*/?>', '', html)  # حذف <br> الزائدة
-    return html.strip()
+    html = re.sub(r'\s+', ' ', html)           # إزالة كل المسافات الزائدة
+    html = re.sub(r'<\s*br\s*/?>', '', html)   # حذف <br> الزائدة
+    html = html.strip()
+
+    # إزالة الـ div الخارجي نهائياً → نبدأ مباشرة بالمحتوى
+    if html.startswith('<div>') and html.endswith('</div>'):
+        html = html[5:-6].strip()
+
+    return html
 
 def get_article_details(url):
     try:
@@ -102,12 +117,15 @@ def get_article_details(url):
             if og:
                 featured = og.get('content')
 
-        # المحتوى المنظف حسب طلبك
+        # استخراج slug من الرابط (بديل عن link)
+        slug = url.rstrip('/').split('/')[-1]
+
+        # المحتوى المنظف
         content_html = clean_content(soup)
 
         return {
             "title": title,
-            "link": url,
+            "slug": slug,                    # بديل عن link
             "published_date": published_date,
             "categories": categories,
             "featured_image": featured,
@@ -119,7 +137,6 @@ def get_article_details(url):
         print(f"   ❌ خطأ في {url}: {e}")
         return None
 
-# باقي الكود (جمع الروابط) كما هو بدون تغيير
 def scrape_links():
     print("🚀 مرحلة 1: جمع الروابط...")
     for cat in CATEGORIES:
@@ -161,7 +178,7 @@ def run():
         details = get_article_details(item["link"])
         if details:
             full_articles.append(details)
-        time.sleep(1.6)
+        time.sleep(1.5)
     
     output = {
         "last_updated": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -173,7 +190,7 @@ def run():
     with open("output.json", "w", encoding="utf-8") as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
     
-    print(f"\n🎉 انتهى بنجاح! تم تنظيف كل المقالات حسب طلبك")
+    print(f"\n🎉 انتهى بنجاح! تم تنظيف كل المقالات بالشكل المطلوب (بدون كلاسات، بدون div خارجي، slug + روابط نظيفة)")
 
 if __name__ == "__main__":
     run()
